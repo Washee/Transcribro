@@ -10,11 +10,11 @@ import android.os.RemoteException
 import android.speech.RecognitionService
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import com.whispercpp.whisper.WhisperContext
 import dev.soupslurpr.transcribro.recognitionservice.silerovad.SileroVadApi
 import dev.soupslurpr.transcribro.recognitionservice.silerovad.SileroVadDetector
 import dev.soupslurpr.transcribro.recognitionservice.silerovad.SileroVadLocalDataSource
@@ -22,12 +22,15 @@ import dev.soupslurpr.transcribro.recognitionservice.silerovad.SileroVadReposito
 import dev.soupslurpr.transcribro.recognitionservice.whisper.WhisperApi
 import dev.soupslurpr.transcribro.recognitionservice.whisper.WhisperLocalDataSource
 import dev.soupslurpr.transcribro.recognitionservice.whisper.WhisperRepository
+import dev.soupslurpr.voiceime.streamingservice.wyoming.WhisperService
+import dev.soupslurpr.voiceime.streamingservice.wyoming.WyomingWhisperApi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import com.whispercpp.whisper.WhisperContext
 import java.lang.System.currentTimeMillis
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -59,21 +62,9 @@ class MainRecognitionService : RecognitionService() {
 
     private val transcribeJobs = mutableListOf<Job>()
 
-    private val whisperRepository: WhisperRepository =
-        WhisperRepository(
-            WhisperLocalDataSource(
-                whisperApi =
-                object : WhisperApi {
-                    override fun getWhisperContext(): WhisperContext {
-                        return WhisperContext.createContextFromAsset(
-                            application.assets,
-                            "models/whisper/ggml-model-whisper-tiny.en-q8_0.bin"
-                        )
-                    }
-                },
-                ioDispatcher = Dispatchers.IO,
-            )
-        )
+    private lateinit var whisperApi: WhisperService
+
+    private val localSTT = false
 
     private val sileroVadRepository = SileroVadRepository(
         SileroVadLocalDataSource(
@@ -105,6 +96,32 @@ class MainRecognitionService : RecognitionService() {
             Dispatchers.IO
         )
     )
+
+    override fun onCreate() {
+        super.onCreate()
+
+        if(localSTT) {
+            whisperApi = WhisperRepository(
+                WhisperLocalDataSource(
+                    whisperApi =
+                        object : WhisperApi {
+                            override fun getWhisperContext(): WhisperContext {
+                                return WhisperContext.createContextFromAsset(
+                                    application.assets,
+                                    "models/whisper/ggml-model-whisper-tiny.en-q8_0.bin"
+                                )
+                            }
+                        },
+                    ioDispatcher = Dispatchers.IO,
+                )
+            )
+        } else {
+            whisperApi = WyomingWhisperApi(this,
+                "192.168.178.10",
+                10300,
+                false)
+        }
+    }
 
     override fun onStartListening(recognizerIntent: Intent?, listener: Callback?) {
         val autoStopRecognition = recognizerIntent?.extras?.getBoolean(EXTRA_AUTO_STOP) ?: true
@@ -297,8 +314,9 @@ class MainRecognitionService : RecognitionService() {
                         val transcribeJob = transcribeScope.launch {
                             val timeBeforeTranscription = currentTimeMillis()
 
+                            whisperApi.startTranscription("de")
                             val transcriptionText =
-                                whisperRepository.transcribeAudio(
+                                whisperApi.transcribeAudio(
                                     transcription.audioData.slice(
                                         ((transcription.start!!.toInt() - speechStartPadMs).coerceAtLeast(
                                             0
@@ -307,7 +325,9 @@ class MainRecognitionService : RecognitionService() {
                                         .toShortArray(),
                                 )
 
-                            transcription.text = transcriptionText
+                            Log.d("wyoming",transcriptionText)
+                            transcription.text = transcriptionText + whisperApi.endTranscription()
+                            Log.d("wyoming",transcription.text.toString())
 
                             totalTranscriptionTime += currentTimeMillis() - timeBeforeTranscription
 
@@ -371,15 +391,16 @@ class MainRecognitionService : RecognitionService() {
                                         val transcribeJob = transcribeScope.launch {
                                             val timeBeforeTranscription = currentTimeMillis()
 
+                                            whisperApi.startTranscription("de")
                                             transcription.text =
-                                                whisperRepository.transcribeAudio(
+                                                whisperApi.transcribeAudio(
                                                     transcription.audioData.slice(
                                                         ((transcription.start!!.toInt() - speechStartPadMs).coerceAtLeast(
                                                             0
                                                         ))..((transcription.end!!.toInt()).coerceAtMost(transcription.audioData.size - 1))
                                                     )
                                                         .toShortArray(),
-                                                )
+                                                ) + whisperApi.endTranscription()
 
                                             totalTranscriptionTime += currentTimeMillis() - timeBeforeTranscription
 
@@ -488,7 +509,7 @@ class MainRecognitionService : RecognitionService() {
             it.cancel()
         }
         runBlocking {
-            whisperRepository.release()
+            whisperApi.release()
             sileroVadRepository.release()
         }
     }
