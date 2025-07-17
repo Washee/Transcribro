@@ -3,10 +3,11 @@ package dev.soupslurpr.transcribro.recognitionservice.whisper
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import com.whispercpp.whisper.WhisperContext
+import dev.soupslurpr.voiceime.streamingservice.wyoming.WhisperService
 
-class WhisperRepository(
+class WhisperRepository (
     private val whisperLocalDataSource: WhisperLocalDataSource
-) {
+) : WhisperService {
 
     private var whisperContext: MutableState<WhisperContext?> =
         mutableStateOf(null)
@@ -17,7 +18,7 @@ class WhisperRepository(
         }
     }
 
-    suspend fun transcribeAudio(data: ShortArray): String {
+    override suspend fun transcribeAudio(data: ShortArray): String {
         loadWhisperContextIfNull()
         // assume we only have one channel
         var buffer = FloatArray(data.size) { index ->
@@ -40,7 +41,16 @@ class WhisperRepository(
         return transcript.removeSuffix(" .") // remove hallucination
     }
 
-    suspend fun release() {
+    override suspend fun release() {
         whisperContext.value?.release()
+    }
+
+    override suspend fun endTranscription(): String {
+        //nothing to do here
+        return ""
+    }
+
+    override suspend fun startTranscription(lang: String) {
+        //do nothing
     }
 }
