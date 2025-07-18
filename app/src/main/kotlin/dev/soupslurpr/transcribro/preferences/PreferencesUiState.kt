@@ -4,6 +4,8 @@ import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 
 /** Preference pairs, the first is the preference key, and the second is the default value. */
 data class PreferencesUiState(
@@ -40,6 +42,30 @@ data class PreferencesUiState(
     /** Whether to automatically send transcription when speech stops being detected. */
     val autoSendTranscription: Pair<Preferences.Key<Boolean>, MutableState<Boolean>> = Pair(
         (booleanPreferencesKey("AUTO_SEND_TRANSCRIPTION")),
+        mutableStateOf(false)
+    ),
+
+    /** Whether to automatically send transcription when speech stops being detected. */
+    val useWyoming: Pair<Preferences.Key<Boolean>, MutableState<Boolean>> = Pair(
+        (booleanPreferencesKey("USE_WYOMING")),
+        mutableStateOf(false)
+    ),
+
+    /** Whether to automatically send transcription when speech stops being detected. */
+    val wyomingAddress: Pair<Preferences.Key<String>, MutableState<String>> = Pair(
+        (stringPreferencesKey("WYOMING_ADDRESS")),
+        mutableStateOf("")
+    ),
+
+    /** Whether to automatically send transcription when speech stops being detected. */
+    val wyomingPort: Pair<Preferences.Key<Int>, MutableState<Int>> = Pair(
+        (intPreferencesKey("WYOMING_PORT")),
+        mutableStateOf(443)
+    ),
+
+    /** Whether to automatically send transcription when speech stops being detected. */
+    val wyomingSSL: Pair<Preferences.Key<Boolean>, MutableState<Boolean>> = Pair(
+        (booleanPreferencesKey("WYOMING_SSL")),
         mutableStateOf(false)
     )
 )

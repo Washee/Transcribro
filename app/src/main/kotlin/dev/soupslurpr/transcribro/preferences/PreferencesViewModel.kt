@@ -81,6 +81,38 @@ class PreferencesViewModel(private val dataStore: DataStore<Preferences>) : View
                                 .first] ?: uiState.value
                                 .autoSendTranscription.second.value
                         )
+                    ),
+                    useWyoming = Pair(
+                        uiState.value.useWyoming.first,
+                        mutableStateOf(
+                            preferences[uiState.value.useWyoming
+                                .first] ?: uiState.value
+                                .useWyoming.second.value
+                        )
+                    ),
+                    wyomingAddress = Pair(
+                        uiState.value.wyomingAddress.first,
+                        mutableStateOf(
+                            preferences[uiState.value.wyomingAddress
+                                .first] ?: uiState.value
+                                .wyomingAddress.second.value
+                        )
+                    ),
+                    wyomingPort = Pair(
+                        uiState.value.wyomingPort.first,
+                        mutableStateOf(
+                            preferences[uiState.value.wyomingPort
+                                .first] ?: uiState.value
+                                .wyomingPort.second.value
+                        )
+                    ),
+                    wyomingSSL = Pair(
+                        uiState.value.wyomingSSL.first,
+                        mutableStateOf(
+                            preferences[uiState.value.wyomingSSL
+                                .first] ?: uiState.value
+                                .wyomingSSL.second.value
+                        )
                     )
                 )
             }
@@ -91,6 +123,28 @@ class PreferencesViewModel(private val dataStore: DataStore<Preferences>) : View
      * Set a preference to a value and save to Preferences DataStore
      */
     fun setPreference(key: Preferences.Key<Boolean>, value: Boolean) {
+        viewModelScope.launch {
+            dataStore.edit { preferences ->
+                preferences[key] = value
+            }
+        }
+    }
+
+    /**
+     * Set a preference to a value and save to Preferences DataStore
+     */
+    fun setPreference(key: Preferences.Key<String>, value: String) {
+        viewModelScope.launch {
+            dataStore.edit { preferences ->
+                preferences[key] = value
+            }
+        }
+    }
+
+    /**
+     * Set a preference to a value and save to Preferences DataStore
+     */
+    fun setPreference(key: Preferences.Key<Int>, value: Int) {
         viewModelScope.launch {
             dataStore.edit { preferences ->
                 preferences[key] = value
