@@ -60,7 +60,7 @@ data class PreferencesUiState(
     /** Whether to automatically send transcription when speech stops being detected. */
     val wyomingPort: Pair<Preferences.Key<Int>, MutableState<Int>> = Pair(
         (intPreferencesKey("WYOMING_PORT")),
-        mutableStateOf(443)
+        mutableStateOf(10300)
     ),
 
     /** Whether to automatically send transcription when speech stops being detected. */
