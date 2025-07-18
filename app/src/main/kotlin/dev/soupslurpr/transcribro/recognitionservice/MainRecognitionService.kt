@@ -19,18 +19,14 @@ import dev.soupslurpr.transcribro.recognitionservice.silerovad.SileroVadApi
 import dev.soupslurpr.transcribro.recognitionservice.silerovad.SileroVadDetector
 import dev.soupslurpr.transcribro.recognitionservice.silerovad.SileroVadLocalDataSource
 import dev.soupslurpr.transcribro.recognitionservice.silerovad.SileroVadRepository
-import dev.soupslurpr.transcribro.recognitionservice.whisper.local.WhisperApi
-import dev.soupslurpr.transcribro.recognitionservice.whisper.local.WhisperLocalDataSource
-import dev.soupslurpr.transcribro.recognitionservice.whisper.local.WhisperRepository
 import dev.soupslurpr.transcribro.recognitionservice.whisper.WhisperService
-import dev.soupslurpr.transcribro.recognitionservice.whisper.wyoming.WyomingWhisperService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import com.whispercpp.whisper.WhisperContext
+import dev.soupslurpr.transcribro.recognitionservice.whisper.WhisperServiceManager
 import java.lang.System.currentTimeMillis
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -64,8 +60,6 @@ class MainRecognitionService : RecognitionService() {
 
     private lateinit var whisperApi: WhisperService
 
-    private val localSTT = false
-
     private val sileroVadRepository = SileroVadRepository(
         SileroVadLocalDataSource(
             object : SileroVadApi {
@@ -96,34 +90,6 @@ class MainRecognitionService : RecognitionService() {
             Dispatchers.IO
         )
     )
-
-    //TODO dynamische Weiche je nach Verfügbarkeit??
-    // Netzwerk nur, wenn Server verfügbar ist? Wann checken? Nur bei Instantiierung des MainRecognitionServcie???
-    override fun onCreate() {
-        super.onCreate()
-
-        if(localSTT) {
-            whisperApi = WhisperRepository(
-                WhisperLocalDataSource(
-                    whisperApi =
-                        object : WhisperApi {
-                            override fun getWhisperContext(): WhisperContext {
-                                return WhisperContext.createContextFromAsset(
-                                    application.assets,
-                                    "models/whisper/ggml-model-whisper-tiny.en-q8_0.bin"
-                                )
-                            }
-                        },
-                    ioDispatcher = Dispatchers.IO,
-                )
-            )
-        } else {
-            whisperApi = WyomingWhisperService(this,
-                "192.168.178.10",
-                10300,
-                false)
-        }
-    }
 
     override fun onStartListening(recognizerIntent: Intent?, listener: Callback?) {
         val autoStopRecognition = recognizerIntent?.extras?.getBoolean(EXTRA_AUTO_STOP) ?: true
@@ -256,6 +222,8 @@ class MainRecognitionService : RecognitionService() {
         var totalTranscriptionTime = 0L
 
         recordAndTranscribeJob = recordAndTranscribeScope.launch recordAndTranscribe@{
+            whisperApi = WhisperServiceManager.getWhisperService(this@MainRecognitionService)
+
             audioRecord.startRecording()
             isRecording.set(true)
             isSpeaking = false

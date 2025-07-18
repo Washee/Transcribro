@@ -36,4 +36,13 @@
     <string name="auto_start_recognition_setting_description">Automatically start recognition when switching from another input method</string>
     <string name="auto_send_transcription_setting_name">Auto-Send Transcription</string>
     <string name="auto_send_transcription_setting_description">Automatically send transcription when speech stops being detected</string>
+    <string name="wyoming_setting_category">Wyoming</string>
+    <string name="wyoming_activate_setting_name">Activate wyoming</string>
+    <string name="wyoming_activate_setting_description">Activates the wyoming whisper server integration.</string>
+    <string name="wyoming_address_setting_name">Server address</string>
+    <string name="wyoming_address_setting_description">Hostname or ip</string>
+    <string name="wyoming_port_setting_name">Server port</string>
+    <string name="wyoming_port_setting_description">Server port</string>
+    <string name="wyoming_ssl_setting_name">Encryption</string>
+    <string name="wyoming_ssl_setting_description">Activates SSL encryption for the TCP socket</string>
 </resources>
