@@ -1,4 +1,4 @@
-package dev.soupslurpr.voiceime.streamingservice.wyoming
+package dev.soupslurpr.transcribro.recognitionservice.whisper
 
 interface WhisperService {
     suspend fun startTranscription(lang: String)
