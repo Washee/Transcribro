@@ -19,11 +19,11 @@ import dev.soupslurpr.transcribro.recognitionservice.silerovad.SileroVadApi
 import dev.soupslurpr.transcribro.recognitionservice.silerovad.SileroVadDetector
 import dev.soupslurpr.transcribro.recognitionservice.silerovad.SileroVadLocalDataSource
 import dev.soupslurpr.transcribro.recognitionservice.silerovad.SileroVadRepository
-import dev.soupslurpr.transcribro.recognitionservice.whisper.WhisperApi
-import dev.soupslurpr.transcribro.recognitionservice.whisper.WhisperLocalDataSource
-import dev.soupslurpr.transcribro.recognitionservice.whisper.WhisperRepository
-import dev.soupslurpr.voiceime.streamingservice.wyoming.WhisperService
-import dev.soupslurpr.voiceime.streamingservice.wyoming.WyomingWhisperApi
+import dev.soupslurpr.transcribro.recognitionservice.whisper.local.WhisperApi
+import dev.soupslurpr.transcribro.recognitionservice.whisper.local.WhisperLocalDataSource
+import dev.soupslurpr.transcribro.recognitionservice.whisper.local.WhisperRepository
+import dev.soupslurpr.transcribro.recognitionservice.whisper.WhisperService
+import dev.soupslurpr.transcribro.recognitionservice.whisper.wyoming.WyomingWhisperService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -97,6 +97,8 @@ class MainRecognitionService : RecognitionService() {
         )
     )
 
+    //TODO dynamische Weiche je nach Verfügbarkeit??
+    // Netzwerk nur, wenn Server verfügbar ist? Wann checken? Nur bei Instantiierung des MainRecognitionServcie???
     override fun onCreate() {
         super.onCreate()
 
@@ -116,7 +118,7 @@ class MainRecognitionService : RecognitionService() {
                 )
             )
         } else {
-            whisperApi = WyomingWhisperApi(this,
+            whisperApi = WyomingWhisperService(this,
                 "192.168.178.10",
                 10300,
                 false)

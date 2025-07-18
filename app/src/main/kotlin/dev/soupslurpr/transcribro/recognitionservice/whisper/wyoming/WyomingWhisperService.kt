@@ -1,9 +1,10 @@
-package dev.soupslurpr.voiceime.streamingservice.wyoming
+package dev.soupslurpr.transcribro.recognitionservice.whisper.wyoming
 
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.util.Log
+import dev.soupslurpr.transcribro.recognitionservice.whisper.WhisperService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -12,14 +13,14 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetAddress
 import java.net.Socket
-import javax.net.ssl.SSLSocket
-import javax.net.ssl.SSLSocketFactory
 import java.net.UnknownHostException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.charset.StandardCharsets
+import javax.net.ssl.SSLSocket
+import javax.net.ssl.SSLSocketFactory
 
-class WyomingWhisperApi (
+class WyomingWhisperService (
     private val context: Context,
     private val host: String = "localhost",
     private val port: Int = 10300,
@@ -103,7 +104,7 @@ class WyomingWhisperApi (
     override suspend fun startTranscription(language: String) = withContext(Dispatchers.IO) {
         Log.d("wyoming", "startTranscription called from thread: ${Thread.currentThread().name}")
 
-        if(!estabilshConnection())
+        if (!estabilshConnection())
             return@withContext
 
         Log.w("wyoming", "Starting Transcription")
@@ -111,24 +112,6 @@ class WyomingWhisperApi (
             header = JSONObject(mapOf("type" to "transcribe", "version" to "1.7.1")),
             data = JSONObject(mapOf("language" to language))
         )
-
-        val audioMeta = JSONObject(mapOf(
-            "rate" to 16000,
-            "width" to 2,
-            "channels" to 1,
-            "timestamp" to JSONObject.NULL
-        ))
-
-        sendEvent(
-            header = JSONObject(mapOf("type" to "audio-start", "version" to "1.7.1")),
-            data = audioMeta
-        )
-    }
-    override suspend fun transcribeAudio(audioData: ShortArray): String = withContext(Dispatchers.IO) {
-        if (!estabilshConnection())
-            return@withContext ""
-
-        Log.w("wyoming", "transcribe")
 
         val audioMeta = JSONObject(
             mapOf(
@@ -139,56 +122,55 @@ class WyomingWhisperApi (
             )
         )
 
-        val payload = shortArrayToLittleEndianByteArray(audioData)
-
         sendEvent(
-            header = JSONObject(mapOf("type" to "audio-chunk", "version" to "1.7.1")),
-            data = audioMeta,
-            payload = payload
+            header = JSONObject(mapOf("type" to "audio-start", "version" to "1.7.1")),
+            data = audioMeta
         )
-
-        return@withContext ""
     }
-//    override suspend fun transcribeAudio(audioData: ShortArray): String = withContext(Dispatchers.IO) {
-//        if (!estabilshConnection())
-//            return@withContext ""
-//
-//        Log.w("wyoming", "transcribe")
-//
-//        val audioMeta = JSONObject(
-//            mapOf(
-//                "rate" to 16000,
-//                "width" to 2,
-//                "channels" to 1,
-//                "timestamp" to JSONObject.NULL
-//            )
-//        )
-//
-//        val chunkSizeSamples = 160 // 160 Samples à 2 Bytes = 320 Bytes
-//
-//        var offset = 0
-//        while (offset < audioData.size) {
-//            val end = minOf(offset + chunkSizeSamples, audioData.size)
-//            val chunkSamples = audioData.sliceArray(offset until end)
-//
-//            val payload = ByteBuffer.allocate(chunkSamples.size * 2).apply {
-//                chunkSamples.forEach { putShort(it) }
-//            }.array()
-//
-//            sendEvent(
-//                header = JSONObject(mapOf("type" to "audio-chunk", "version" to "1.7.1")),
-//                data = audioMeta,
-//                payload = payload
-//            )
-//
-//            offset = end
-//        }
-//
-//        return@withContext ""
-//    }
+
+    override suspend fun transcribeAudio(audioData: ShortArray): String =
+        withContext(Dispatchers.IO) {
+            if (!estabilshConnection())
+                return@withContext ""
+
+            Log.w("wyoming", "transcribe")
+
+            val chunkSizeSamples = 4000  // 250 ms @ 16kHz
+            var offset = 0
+            var timestampMs = 0
+
+            while (offset < audioData.size) {
+                val end = minOf(offset + chunkSizeSamples, audioData.size)
+                val chunkSamples = audioData.sliceArray(offset until end)
+                val payload = shortArrayToLittleEndianByteArray(chunkSamples)
+
+                val audioMeta = JSONObject(
+                    mapOf(
+                        "rate" to 16000,
+                        "width" to 2,
+                        "channels" to 1,
+                        "timestamp" to timestampMs  // ✅ relativer Versatz in der Aufnahme
+                    )
+                )
+
+                sendEvent(
+                    header = JSONObject(mapOf("type" to "audio-chunk", "version" to "1.7.1")),
+                    data = audioMeta,
+                    payload = payload
+                )
+
+                offset = end
+                // Zeit berechnen anhand tatsächlicher Chunk-Länge
+                val chunkDurationMs =
+                    (chunkSamples.size * 1000) / 16000  // z. B. 4000 Samples → 250 ms
+                timestampMs += chunkDurationMs
+            }
+
+            return@withContext ""
+        }
 
     override suspend fun endTranscription(): String = withContext(Dispatchers.IO) {
-        if(!estabilshConnection())
+        if (!estabilshConnection())
             return@withContext ""
 
         Log.w("wyoming", "Ending Transcription")
@@ -200,7 +182,7 @@ class WyomingWhisperApi (
         // Ergebnis auslesen
         val result = readTranscriptionResult()
         Log.w("wyoming", "response received")
-        if(::socket.isInitialized) {
+        if (::socket.isInitialized) {
             socket.close()
         }
         return@withContext result
@@ -208,7 +190,7 @@ class WyomingWhisperApi (
 
     override suspend fun release() {
         withContext(Dispatchers.IO) {
-            if(::socket.isInitialized) {
+            if (::socket.isInitialized) {
                 socket.close()
             }
         }

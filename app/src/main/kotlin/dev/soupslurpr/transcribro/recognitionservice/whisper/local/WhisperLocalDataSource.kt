@@ -1,4 +1,4 @@
-package dev.soupslurpr.transcribro.recognitionservice.whisper
+package dev.soupslurpr.transcribro.recognitionservice.whisper.local
 
 import com.whispercpp.whisper.WhisperContext
 import kotlinx.coroutines.CoroutineDispatcher

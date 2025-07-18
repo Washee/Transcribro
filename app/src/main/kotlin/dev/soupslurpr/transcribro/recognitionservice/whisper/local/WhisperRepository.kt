@@ -1,9 +1,9 @@
-package dev.soupslurpr.transcribro.recognitionservice.whisper
+package dev.soupslurpr.transcribro.recognitionservice.whisper.local
 
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import com.whispercpp.whisper.WhisperContext
-import dev.soupslurpr.voiceime.streamingservice.wyoming.WhisperService
+import dev.soupslurpr.transcribro.recognitionservice.whisper.WhisperService
 
 class WhisperRepository (
     private val whisperLocalDataSource: WhisperLocalDataSource
