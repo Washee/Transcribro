@@ -20,14 +20,18 @@ import dev.soupslurpr.transcribro.recognitionservice.silerovad.SileroVadDetector
 import dev.soupslurpr.transcribro.recognitionservice.silerovad.SileroVadLocalDataSource
 import dev.soupslurpr.transcribro.recognitionservice.silerovad.SileroVadRepository
 import dev.soupslurpr.transcribro.recognitionservice.whisper.WhisperService
+import dev.soupslurpr.transcribro.recognitionservice.whisper.WhisperServiceManager
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import dev.soupslurpr.transcribro.recognitionservice.whisper.WhisperServiceManager
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.lang.System.currentTimeMillis
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
 private data class Transcription(
@@ -40,6 +44,22 @@ private data class Transcription(
 class MainRecognitionService : RecognitionService() {
     companion object {
         const val EXTRA_AUTO_STOP = "dev.soupslurpr.transcribro.EXTRA_AUTO_STOP"
+    }
+
+    private val transcriptionMutex = Mutex()
+
+    private suspend fun transcribeSegment(language: String, audio: ShortArray): String {
+        return transcriptionMutex.withLock {
+            try {
+                whisperApi.startTranscription(language)
+                whisperApi.transcribeAudio(audio) + whisperApi.endTranscription()
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (exception: Exception) {
+                Log.e("MainRecognitionService", "Transcription failed", exception)
+                ""
+            }
+        }
     }
 
     private val recordAndTranscribeScope = CoroutineScope(Dispatchers.IO)
@@ -95,6 +115,15 @@ class MainRecognitionService : RecognitionService() {
         val autoStopRecognition = recognizerIntent?.extras?.getBoolean(EXTRA_AUTO_STOP) ?: true
         val isPartialResults = recognizerIntent?.extras?.getBoolean(RecognizerIntent.EXTRA_PARTIAL_RESULTS)
         val speechStartPadMs = 24000
+        val supportedLanguages = setOf("en", "de", "fr", "es", "it", "nl", "pl")
+        val requestedLanguage = recognizerIntent?.extras
+            ?.getString(RecognizerIntent.EXTRA_LANGUAGE)
+            ?.substringBefore('-')
+            ?.substringBefore('_')
+            ?.lowercase()
+        val recognitionLanguage = requestedLanguage?.takeIf { it in supportedLanguages }
+            ?: Locale.getDefault().language.takeIf { it in supportedLanguages }
+            ?: "de"
 
         if (recordAndTranscribeJob?.isActive == true) {
             listener?.error(SpeechRecognizer.ERROR_RECOGNIZER_BUSY)
@@ -284,20 +313,14 @@ class MainRecognitionService : RecognitionService() {
                         val transcribeJob = transcribeScope.launch {
                             val timeBeforeTranscription = currentTimeMillis()
 
-                            whisperApi.startTranscription("de")
-                            val transcriptionText =
-                                whisperApi.transcribeAudio(
-                                    transcription.audioData.slice(
-                                        ((transcription.start!!.toInt() - speechStartPadMs).coerceAtLeast(
-                                            0
-                                        ))..((transcription.end!!.toInt()).coerceAtMost(transcription.audioData.size - 1))
-                                    )
-                                        .toShortArray(),
-                                )
+                            val audio = transcription.audioData.slice(
+                                ((transcription.start!!.toInt() - speechStartPadMs).coerceAtLeast(
+                                    0
+                                ))..((transcription.end!!.toInt()).coerceAtMost(transcription.audioData.size - 1))
+                            ).toShortArray()
 
-                            Log.d("wyoming",transcriptionText)
-                            transcription.text = transcriptionText + whisperApi.endTranscription()
-                            Log.d("wyoming",transcription.text.toString())
+                            transcription.text = transcribeSegment(recognitionLanguage, audio)
+                            Log.d("wyoming", transcription.text.toString())
 
                             totalTranscriptionTime += currentTimeMillis() - timeBeforeTranscription
 
@@ -361,16 +384,13 @@ class MainRecognitionService : RecognitionService() {
                                         val transcribeJob = transcribeScope.launch {
                                             val timeBeforeTranscription = currentTimeMillis()
 
-                                            whisperApi.startTranscription("de")
-                                            transcription.text =
-                                                whisperApi.transcribeAudio(
-                                                    transcription.audioData.slice(
-                                                        ((transcription.start!!.toInt() - speechStartPadMs).coerceAtLeast(
-                                                            0
-                                                        ))..((transcription.end!!.toInt()).coerceAtMost(transcription.audioData.size - 1))
-                                                    )
-                                                        .toShortArray(),
-                                                ) + whisperApi.endTranscription()
+                                            val audio = transcription.audioData.slice(
+                                                ((transcription.start!!.toInt() - speechStartPadMs).coerceAtLeast(
+                                                    0
+                                                ))..((transcription.end!!.toInt()).coerceAtMost(transcription.audioData.size - 1))
+                                            ).toShortArray()
+
+                                            transcription.text = transcribeSegment(recognitionLanguage, audio)
 
                                             totalTranscriptionTime += currentTimeMillis() - timeBeforeTranscription
 
@@ -479,7 +499,11 @@ class MainRecognitionService : RecognitionService() {
             it.cancel()
         }
         runBlocking {
-            whisperApi.release()
+            transcriptionMutex.withLock {
+                if (::whisperApi.isInitialized) {
+                    whisperApi.release()
+                }
+            }
             sileroVadRepository.release()
         }
     }

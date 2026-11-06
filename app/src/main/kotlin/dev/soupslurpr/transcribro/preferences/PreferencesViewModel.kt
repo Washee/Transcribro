@@ -113,6 +113,14 @@ class PreferencesViewModel(private val dataStore: DataStore<Preferences>) : View
                                 .first] ?: uiState.value
                                 .wyomingSSL.second.value
                         )
+                    ),
+                    useLocalWhisperFallback = Pair(
+                        uiState.value.useLocalWhisperFallback.first,
+                        mutableStateOf(
+                            preferences[uiState.value.useLocalWhisperFallback
+                                .first] ?: uiState.value
+                                .useLocalWhisperFallback.second.value
+                        )
                     )
                 )
             }

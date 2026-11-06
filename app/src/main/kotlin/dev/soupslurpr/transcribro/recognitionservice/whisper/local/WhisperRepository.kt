@@ -43,6 +43,7 @@ class WhisperRepository (
 
     override suspend fun release() {
         whisperContext.value?.release()
+        whisperContext.value = null
     }
 
     override suspend fun endTranscription(): String {

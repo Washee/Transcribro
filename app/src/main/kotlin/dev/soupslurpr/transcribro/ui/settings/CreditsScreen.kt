@@ -237,6 +237,20 @@ fun CreditsScreen(
         }
         item {
             CreditsItem(
+                dependencyName = "Whistle (Cactus Compute)",
+                dependencyPackageName = "https://huggingface.co/Cactus-Compute/whistle",
+                dependencyLicense = APACHE2LICENSE
+            )
+        }
+        item {
+            CreditsItem(
+                dependencyName = "Cactus runtime",
+                dependencyPackageName = "https://github.com/cactus-compute/cactus",
+                dependencyLicense = APACHE2LICENSE
+            )
+        }
+        item {
+            CreditsItem(
                 dependencyName = "whisper.cpp",
                 dependencyPackageName = "https://github.com/ggerganov/whisper.cpp",
                 dependencyLicense = "MIT License\n" +

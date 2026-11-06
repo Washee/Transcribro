@@ -67,5 +67,11 @@ data class PreferencesUiState(
     val wyomingSSL: Pair<Preferences.Key<Boolean>, MutableState<Boolean>> = Pair(
         (booleanPreferencesKey("WYOMING_SSL")),
         mutableStateOf(false)
+    ),
+
+    /** Whether to transcribe on-device when the Wyoming server cannot be reached. */
+    val useLocalWhisperFallback: Pair<Preferences.Key<Boolean>, MutableState<Boolean>> = Pair(
+        (booleanPreferencesKey("USE_LOCAL_WHISPER_FALLBACK")),
+        mutableStateOf(true)
     )
 )

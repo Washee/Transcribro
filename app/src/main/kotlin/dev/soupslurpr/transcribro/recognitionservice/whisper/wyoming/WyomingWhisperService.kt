@@ -1,230 +1,252 @@
 package dev.soupslurpr.transcribro.recognitionservice.whisper.wyoming
 
-import android.content.Context
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import android.util.Log
 import dev.soupslurpr.transcribro.recognitionservice.whisper.WhisperService
+import dev.soupslurpr.transcribro.recognitionservice.whisper.WhisperUnavailableException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
-import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.Socket
-import java.net.UnknownHostException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.charset.StandardCharsets
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
 
-class WyomingWhisperService (
-    private val context: Context,
+class WyomingWhisperService(
     private val host: String = "localhost",
     private val port: Int = 10300,
-    private val ssl: Boolean = true
+    private val ssl: Boolean = true,
 ) : WhisperService {
-    private lateinit var socket: Socket
-    private lateinit var output: OutputStream
-    private lateinit var input: InputStream
-
-    private fun isNetworkAvailable(): Boolean {
-        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val network = cm.activeNetwork ?: return false
-        val capabilities = cm.getNetworkCapabilities(network) ?: return false
-        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    companion object {
+        private const val TAG = "wyoming"
+        private const val CONNECT_TIMEOUT_MS = 3_000
+        private const val AVAILABILITY_TIMEOUT_MS = 1_000
+        private const val READ_TIMEOUT_MS = 30_000
     }
 
-    private fun estabilshConnection(): Boolean {
-        if (!isNetworkAvailable()) {
-            Log.e("wyoming", "Kein Netzwerk verfügbar")
-            return false
-        }
-        if(!::socket.isInitialized || socket.isClosed) {
-            try {
-                val address = InetAddress.getByName(host)
-                Log.w("wyoming", address.toString())
-                if(ssl) {
-                    val factory = SSLSocketFactory.getDefault() as SSLSocketFactory
-                    socket = factory.createSocket(host, port)
-                    // Optional: bestimmte Protokolle oder Ciphers erzwingen
-                    (socket as SSLSocket).setEnabledProtocols(arrayOf("TLSv1.2"));
-                } else {
-                    socket = Socket(address, port)
-                }
+    private var socket: Socket? = null
+    private var output: OutputStream? = null
+    private var input: InputStream? = null
 
-                output = socket.getOutputStream()
-                input = socket.getInputStream()
-                return true
-            } catch (e: UnknownHostException) {
-                Log.e("Socket", "DNS-Auflösung fehlgeschlagen", e)
-                return false
-            } catch (e: IOException) {
-                Log.e("Socket", "Fehler beim Verbindungsaufbau", e)
-                return false
+    override suspend fun isAvailable(): Boolean = withContext(Dispatchers.IO) {
+        try {
+            Socket().use { probe ->
+                probe.connect(InetSocketAddress(host, port), AVAILABILITY_TIMEOUT_MS)
             }
-        } else {
-            Log.w("Socket", "Socket ist noch offen sagt er.")
+            true
+        } catch (exception: CancellationException) {
+            throw exception
+        } catch (exception: Exception) {
+            Log.w(TAG, "Wyoming backend $host:$port is not reachable: ${exception.message}")
+            false
         }
-        return true
+    }
+
+    private fun establishConnection() {
+        val current = socket
+        if (current != null && !current.isClosed) {
+            return
+        }
+
+        closeSocket()
+        try {
+            val address = InetSocketAddress(host, port)
+            val newSocket = if (ssl) {
+                val rawSocket = Socket()
+                rawSocket.connect(address, CONNECT_TIMEOUT_MS)
+                val factory = SSLSocketFactory.getDefault() as SSLSocketFactory
+                (factory.createSocket(rawSocket, host, port, true) as SSLSocket).apply {
+                    enabledProtocols = arrayOf("TLSv1.2")
+                }
+            } else {
+                Socket().apply {
+                    connect(address, CONNECT_TIMEOUT_MS)
+                }
+            }
+            newSocket.soTimeout = READ_TIMEOUT_MS
+            socket = newSocket
+            output = newSocket.getOutputStream()
+            input = newSocket.getInputStream()
+        } catch (exception: IOException) {
+            closeSocket()
+            throw WhisperUnavailableException("Could not connect to Wyoming at $host:$port", exception)
+        }
     }
 
     private fun sendEvent(
         header: JSONObject,
         data: JSONObject? = null,
-        payload: ByteArray? = null
+        payload: ByteArray? = null,
     ) {
-        val headerCopy = JSONObject(header.toString()) // clone
+        val stream = output ?: throw WhisperUnavailableException("Wyoming socket is not connected")
+        val headerCopy = JSONObject(header.toString())
         val dataBytes = data?.toString()?.toByteArray(Charsets.UTF_8) ?: ByteArray(0)
         val payloadBytes = payload ?: ByteArray(0)
 
         if (data != null) headerCopy.put("data_length", dataBytes.size)
         if (payload != null) headerCopy.put("payload_length", payloadBytes.size)
 
-        // 1. Header mit \n
-        val headerString = headerCopy.toString() + "\n"
-        val headerBytes = headerString.toByteArray(Charsets.UTF_8)
-        output.write(headerBytes)
+        try {
+            stream.write((headerCopy.toString() + "\n").toByteArray(Charsets.UTF_8))
+            if (dataBytes.isNotEmpty()) stream.write(dataBytes)
+            if (payloadBytes.isNotEmpty()) stream.write(payloadBytes)
+            stream.flush()
+        } catch (exception: IOException) {
+            closeSocket()
+            throw WhisperUnavailableException("Could not send data to Wyoming", exception)
+        }
 
-        // 2. Optional: JSON-Daten
-        if (dataBytes.isNotEmpty()) output.write(dataBytes)
-
-        // 3. Optional: Payload (z. B. PCM)
-        if (payloadBytes.isNotEmpty()) output.write(payloadBytes)
-
-        output.flush()
-
-        Log.d("wyoming", "Data JSON: ${data?.toString()}")
-        //Log.d("wyoming", "data_length = ${dataBytes.size}")
-        //Log.d("wyoming", "payload_length = ${payloadBytes.size}")
+        Log.d(TAG, "Data JSON: ${data?.toString()}")
     }
 
-    override suspend fun startTranscription(language: String) = withContext(Dispatchers.IO) {
-        Log.d("wyoming", "startTranscription called from thread: ${Thread.currentThread().name}")
+    override suspend fun startTranscription(lang: String) = withContext(Dispatchers.IO) {
+        try {
+            establishConnection()
 
-        if (!estabilshConnection())
-            return@withContext
-
-        Log.w("wyoming", "Starting Transcription")
-        sendEvent(
-            header = JSONObject(mapOf("type" to "transcribe", "version" to "1.7.1")),
-            data = JSONObject(mapOf("language" to language))
-        )
-
-        val audioMeta = JSONObject(
-            mapOf(
-                "rate" to 16000,
-                "width" to 2,
-                "channels" to 1,
-                "timestamp" to JSONObject.NULL
+            sendEvent(
+                header = JSONObject(mapOf("type" to "transcribe", "version" to "1.7.1")),
+                data = JSONObject(mapOf("language" to lang)),
             )
-        )
 
-        sendEvent(
-            header = JSONObject(mapOf("type" to "audio-start", "version" to "1.7.1")),
-            data = audioMeta
-        )
+            val audioMeta = JSONObject(
+                mapOf(
+                    "rate" to 16000,
+                    "width" to 2,
+                    "channels" to 1,
+                    "timestamp" to JSONObject.NULL,
+                ),
+            )
+
+            sendEvent(
+                header = JSONObject(mapOf("type" to "audio-start", "version" to "1.7.1")),
+                data = audioMeta,
+            )
+        } catch (exception: CancellationException) {
+            throw exception
+        } catch (exception: WhisperUnavailableException) {
+            throw exception
+        } catch (exception: Exception) {
+            closeSocket()
+            throw WhisperUnavailableException("Could not start Wyoming transcription", exception)
+        }
     }
 
-    override suspend fun transcribeAudio(audioData: ShortArray): String =
+    override suspend fun transcribeAudio(data: ShortArray): String =
         withContext(Dispatchers.IO) {
-            if (!estabilshConnection())
-                return@withContext ""
+            try {
+                establishConnection()
 
-            Log.w("wyoming", "transcribe")
+                val chunkSizeSamples = 4000 // 250 ms @ 16 kHz
+                var offset = 0
+                var timestampMs = 0
 
-            val chunkSizeSamples = 4000  // 250 ms @ 16kHz
-            var offset = 0
-            var timestampMs = 0
+                while (offset < data.size) {
+                    val end = minOf(offset + chunkSizeSamples, data.size)
+                    val chunkSamples = data.sliceArray(offset until end)
+                    val payload = shortArrayToLittleEndianByteArray(chunkSamples)
 
-            while (offset < audioData.size) {
-                val end = minOf(offset + chunkSizeSamples, audioData.size)
-                val chunkSamples = audioData.sliceArray(offset until end)
-                val payload = shortArrayToLittleEndianByteArray(chunkSamples)
-
-                val audioMeta = JSONObject(
-                    mapOf(
-                        "rate" to 16000,
-                        "width" to 2,
-                        "channels" to 1,
-                        "timestamp" to timestampMs  // ✅ relativer Versatz in der Aufnahme
+                    val audioMeta = JSONObject(
+                        mapOf(
+                            "rate" to 16000,
+                            "width" to 2,
+                            "channels" to 1,
+                            "timestamp" to timestampMs,
+                        ),
                     )
-                )
 
-                sendEvent(
-                    header = JSONObject(mapOf("type" to "audio-chunk", "version" to "1.7.1")),
-                    data = audioMeta,
-                    payload = payload
-                )
+                    sendEvent(
+                        header = JSONObject(mapOf("type" to "audio-chunk", "version" to "1.7.1")),
+                        data = audioMeta,
+                        payload = payload,
+                    )
 
-                offset = end
-                // Zeit berechnen anhand tatsächlicher Chunk-Länge
-                val chunkDurationMs =
-                    (chunkSamples.size * 1000) / 16000  // z. B. 4000 Samples → 250 ms
-                timestampMs += chunkDurationMs
+                    offset = end
+                    timestampMs += (chunkSamples.size * 1000) / 16000
+                }
+
+                ""
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (exception: WhisperUnavailableException) {
+                throw exception
+            } catch (exception: Exception) {
+                closeSocket()
+                throw WhisperUnavailableException("Could not send audio to Wyoming", exception)
             }
-
-            return@withContext ""
         }
 
     override suspend fun endTranscription(): String = withContext(Dispatchers.IO) {
-        if (!estabilshConnection())
-            return@withContext ""
+        try {
+            establishConnection()
 
-        Log.w("wyoming", "Ending Transcription")
-        sendEvent(
-            header = JSONObject(mapOf("type" to "audio-stop", "version" to "1.7.1")),
-            data = JSONObject() // leeres JSON
-        )
+            sendEvent(
+                header = JSONObject(mapOf("type" to "audio-stop", "version" to "1.7.1")),
+                data = JSONObject(),
+            )
 
-        // Ergebnis auslesen
-        val result = readTranscriptionResult()
-        Log.w("wyoming", "response received")
-        if (::socket.isInitialized) {
-            socket.close()
+            readTranscriptionResult()
+        } catch (exception: CancellationException) {
+            throw exception
+        } catch (exception: WhisperUnavailableException) {
+            throw exception
+        } catch (exception: Exception) {
+            throw WhisperUnavailableException("Could not finish Wyoming transcription", exception)
+        } finally {
+            closeSocket()
         }
-        return@withContext result
     }
 
     override suspend fun release() {
         withContext(Dispatchers.IO) {
-            if (::socket.isInitialized) {
-                socket.close()
-            }
+            closeSocket()
         }
     }
 
-    fun shortArrayToLittleEndianByteArray(shorts: ShortArray): ByteArray {
+    private fun closeSocket() {
+        input = null
+        output = null
+        socket?.let { current ->
+            try {
+                current.close()
+            } catch (exception: IOException) {
+                Log.w(TAG, "Could not close Wyoming socket", exception)
+            }
+        }
+        socket = null
+    }
+
+    private fun shortArrayToLittleEndianByteArray(shorts: ShortArray): ByteArray {
         val byteBuffer = ByteBuffer.allocate(shorts.size * 2)
             .order(ByteOrder.LITTLE_ENDIAN)
         shorts.forEach { byteBuffer.putShort(it) }
         return byteBuffer.array()
     }
 
-    suspend fun readTranscriptionResult(): String {
-        return try {
-            val (header, data, _) = readWyomingMessage()
-
-            if (header.optString("type") == "transcript") {
-                data.optString("text", "")
-            } else {
-                Log.w("wyoming", "Unerwarteter Nachrichtentyp: ${header.optString("type")}")
-                ""
-            }
-        } catch (e: Exception) {
-            Log.e("wyoming", "Fehler beim Lesen der Transkriptionsantwort: ${e.message}")
-            ""
+    private fun readTranscriptionResult(): String {
+        val (header, data, _) = readWyomingMessage()
+        if (header.optString("type") != "transcript") {
+            throw WhisperUnavailableException(
+                "Unexpected Wyoming message type: ${header.optString("type")}",
+            )
         }
+        return data.optString("text", "")
     }
 
-    suspend fun readWyomingMessage(): Triple<JSONObject, JSONObject, ByteArray> {
-        // 1. Header-Zeile lesen (endet mit \n)
+    private fun readWyomingMessage(): Triple<JSONObject, JSONObject, ByteArray> {
+        val stream = input ?: throw WhisperUnavailableException("Wyoming socket is not connected")
+
         val headerLine = StringBuilder()
         while (true) {
-            val byte = input.read()
-            if (byte == -1) throw RuntimeException("Verbindung beim Lesen des Headers beendet")
+            val byte = stream.read()
+            if (byte == -1) {
+                throw WhisperUnavailableException("Connection closed while reading Wyoming header")
+            }
             if (byte.toChar() == '\n') break
             headerLine.append(byte.toChar())
         }
@@ -233,9 +255,8 @@ class WyomingWhisperService (
         val dataLength = headerJson.optInt("data_length", 0)
         val payloadLength = headerJson.optInt("payload_length", 0)
 
-        // 2. Optional: Data lesen
         val dataBytes = if (dataLength > 0) {
-            readExactNBytes(input, dataLength)
+            readExactNBytes(stream, dataLength)
         } else {
             ByteArray(0)
         }
@@ -246,9 +267,8 @@ class WyomingWhisperService (
             JSONObject()
         }
 
-        // 3. Optional: Payload lesen
         val payload = if (payloadLength > 0) {
-            readExactNBytes(input, payloadLength)
+            readExactNBytes(stream, payloadLength)
         } else {
             ByteArray(0)
         }
@@ -256,12 +276,16 @@ class WyomingWhisperService (
         return Triple(headerJson, dataJson, payload)
     }
 
-    fun readExactNBytes(input: InputStream, length: Int): ByteArray {
+    private fun readExactNBytes(stream: InputStream, length: Int): ByteArray {
         val buffer = ByteArray(length)
         var bytesRead = 0
         while (bytesRead < length) {
-            val read = input.read(buffer, bytesRead, length - bytesRead)
-            if (read == -1) throw RuntimeException("Verbindung beim Lesen von $length Bytes beendet")
+            val read = stream.read(buffer, bytesRead, length - bytesRead)
+            if (read == -1) {
+                throw WhisperUnavailableException(
+                    "Connection closed while reading $length bytes from Wyoming",
+                )
+            }
             bytesRead += read
         }
         return buffer

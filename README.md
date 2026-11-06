@@ -6,9 +6,21 @@ It features a voice input keyboard, enabling you to type with speech.\
 It can also be used by other apps either explicitly or when set as the user-selected speech to text app which some apps
 may use for speech to text.
 
+## Speech backends
+
+Transcribro can transcribe locally with whisper.cpp or [Cactus Whistle](https://cactuscompute.com/blog/whistle), or
+send audio to a [Wyoming](https://github.com/OHF-Voice/wyoming) Whisper server. When Wyoming is enabled and the server
+cannot be reached, transcription automatically falls back to Whistle on the device (or whisper.cpp where the
+Whistle runtime is unavailable, such as x86_64 emulators). The fallback is controlled by the "Local fallback
+(Whistle)" setting and can be disabled. Whistle adds a 16.9 MB model and supports English, German, French,
+Spanish, Italian, Dutch and Polish.
+
 ## Language support
 
-Transcribro currently only supports English. However, supporting other languages is planned and tracked in https://github.com/soupslurpr/Transcribro/issues/18.
+The Transcribro UI is currently English-only, and the bundled whisper.cpp fallback uses an English model.
+Cactus Whistle and a Wyoming server can transcribe English, German, French, Spanish, Italian, Dutch and Polish;
+the requested language is taken from `RecognizerIntent.EXTRA_LANGUAGE` when it is one of these languages.
+Additional UI translations are tracked in https://github.com/soupslurpr/Transcribro/issues/18.
 
 ## Download
 

@@ -26,3 +26,5 @@
 #-dontwarn java.awt.HeadlessException
 #-dontwarn java.awt.Window
 -keep class ai.onnxruntime.** { *; }
+# Cactus Whistle JNI bridge
+-keep class dev.soupslurpr.transcribro.recognitionservice.whistle.CactusWhistleNative { *; }
