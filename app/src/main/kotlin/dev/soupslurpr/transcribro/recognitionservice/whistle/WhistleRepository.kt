@@ -2,6 +2,7 @@ package dev.soupslurpr.transcribro.recognitionservice.whistle
 
 import android.content.Context
 import android.util.Log
+import dev.soupslurpr.transcribro.BuildConfig
 import dev.soupslurpr.transcribro.recognitionservice.whisper.WhisperService
 import dev.soupslurpr.transcribro.recognitionservice.whisper.WhisperUnavailableException
 import kotlinx.coroutines.CancellationException
@@ -41,8 +42,14 @@ class WhistleRepository(private val context: Context) : WhisperService {
             val pcm = FloatArray(data.size) { index ->
                 (data[index] / 32768.0f).coerceIn(-1f..1f)
             }
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "transcribeAudio: samples=${data.size} language=$language")
+            }
             val response = withContext(Dispatchers.IO) {
                 CactusWhistleNative.transcribe(pcm, language, wordTimestamps = false)
+            }
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "raw response: $response")
             }
             JSONObject(response).optString("text").trim()
         } catch (exception: CancellationException) {

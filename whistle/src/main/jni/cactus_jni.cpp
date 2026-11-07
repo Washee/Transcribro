@@ -7,6 +7,7 @@
 
 #define LOG_TAG "CactusWhistle"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+#define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
 
 namespace {
 bool g_model_loaded = false;
@@ -104,6 +105,11 @@ Java_dev_soupslurpr_transcribro_recognitionservice_whistle_CactusWhistleNative_n
         return nullptr;
     }
 
+    LOGD("cactus_transcribe: samples=%d language=%s", samples,
+         languageChars != nullptr ? languageChars : "auto");
+
+    cactus_reset();
+
     const int result = cactus_transcribe(
             samplesData,
             samples,
@@ -112,6 +118,8 @@ Java_dev_soupslurpr_transcribro_recognitionservice_whistle_CactusWhistleNative_n
             wordTimestamps == JNI_TRUE ? 1 : 0,
             output,
             outputCapacity);
+
+    cactus_reset();
 
     output[outputCapacity - 1] = '\0';
 

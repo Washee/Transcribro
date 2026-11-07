@@ -16,14 +16,12 @@ class FallbackWhisperService(
     private var audio = ShortArray(0)
     private var usingFallback = false
     private var fallbackStarted = false
-    private var primaryText = ""
 
     override suspend fun isAvailable(): Boolean = true
 
     override suspend fun startTranscription(lang: String) {
         language = lang
         audio = ShortArray(0)
-        primaryText = ""
         fallbackStarted = false
         usingFallback = !isReachable(primary)
 
@@ -49,8 +47,7 @@ class FallbackWhisperService(
         }
 
         return try {
-            primaryText = primary.transcribeAudio(data)
-            primaryText
+            primary.transcribeAudio(data)
         } catch (exception: WhisperUnavailableException) {
             Log.w(logTag, "Primary backend failed while sending audio; using fallback", exception)
             switchToFallback(language)
@@ -64,7 +61,7 @@ class FallbackWhisperService(
         }
 
         return try {
-            primaryText + primary.endTranscription()
+            primary.endTranscription()
         } catch (exception: WhisperUnavailableException) {
             Log.w(logTag, "Primary backend failed before returning a transcript; using fallback", exception)
             switchToFallback(language)

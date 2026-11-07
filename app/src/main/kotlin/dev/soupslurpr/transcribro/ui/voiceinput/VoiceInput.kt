@@ -13,6 +13,7 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.SpeechRecognizer.createSpeechRecognizer
+import android.util.Log
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewConfiguration.getKeyRepeatDelay
@@ -87,6 +88,7 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import dev.soupslurpr.transcribro.BuildConfig
 import dev.soupslurpr.transcribro.R
 import dev.soupslurpr.transcribro.dataStore
 import dev.soupslurpr.transcribro.preferences.PreferencesViewModel
@@ -308,6 +310,9 @@ class VoiceInput : InputMethodService() {
                                                             val transcription = partialResults.getStringArrayList(
                                                                 SpeechRecognizer.RESULTS_RECOGNITION
                                                             )?.get(0) ?: ""
+                                                            if (BuildConfig.DEBUG) {
+                                                                Log.d("VoiceInput", "onPartialResults: $transcription")
+                                                            }
 
                                                             if (transcription.isNotEmpty()) {
                                                                 var textToCommit = if ((ic.getTextBeforeCursor(
@@ -417,6 +422,9 @@ class VoiceInput : InputMethodService() {
                                                                     textToCommit = textToCommit.uppercase()
                                                                 }
 
+                                                                if (BuildConfig.DEBUG) {
+                                                                    Log.d("VoiceInput", "commitText: $textToCommit")
+                                                                }
                                                                 ic.commitText(
                                                                     textToCommit,
                                                                     1

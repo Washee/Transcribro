@@ -15,6 +15,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import dev.soupslurpr.transcribro.BuildConfig
 import dev.soupslurpr.transcribro.recognitionservice.silerovad.SileroVadApi
 import dev.soupslurpr.transcribro.recognitionservice.silerovad.SileroVadDetector
 import dev.soupslurpr.transcribro.recognitionservice.silerovad.SileroVadLocalDataSource
@@ -39,6 +40,7 @@ private data class Transcription(
     var start: Double?,
     var end: Double?,
     var text: String?,
+    val transcribeStarted: AtomicBoolean = AtomicBoolean(false),
 )
 
 class MainRecognitionService : RecognitionService() {
@@ -47,6 +49,7 @@ class MainRecognitionService : RecognitionService() {
     }
 
     private val transcriptionMutex = Mutex()
+    private val vadMutex = Mutex()
 
     private suspend fun transcribeSegment(language: String, audio: ShortArray): String {
         return transcriptionMutex.withLock {
@@ -127,6 +130,7 @@ class MainRecognitionService : RecognitionService() {
 
         if (recordAndTranscribeJob?.isActive == true) {
             listener?.error(SpeechRecognizer.ERROR_RECOGNIZER_BUSY)
+            return
         }
 
         val attributionContext = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -263,6 +267,12 @@ class MainRecognitionService : RecognitionService() {
             val transcriptions = mutableMapOf<Int, Transcription>()
             var transcriptionIndex by mutableIntStateOf(0)
 
+            if (BuildConfig.DEBUG) {
+                Log.d(
+                    "MainRecognitionService",
+                    "start package=$packageName language=$recognitionLanguage autoStop=$autoStopRecognition partial=$isPartialResults"
+                )
+            }
             listener?.readyForSpeech(Bundle())
 
             while (isRecording.get() && isActive) {
@@ -284,148 +294,170 @@ class MainRecognitionService : RecognitionService() {
                 }
 
                 audioRmsScope.launch vadAndTranscribe@{
-                    if (stopListening) {
-                        isRecording.set(false)
-                        listener?.endOfSpeech()
+                    vadMutex.withLock {
+                        if (stopListening) {
+                            isRecording.set(false)
+                            listener?.endOfSpeech()
 
-                        if ((transcriptionIndex != 0) && !autoStopRecognition && !isSpeaking) {
-                            // break if we already transcribed once or more,
-                            // is not auto stop recognition, and not speaking
-                            // because we just want to stop then with the already transcribed parts.
-                            // if there were no transcriptions then we assume VAD didn't work,
-                            // so we transcribe everything all at once.
-                            // if there were transcriptions, then VAD was working.
-                            // in that case, we can break as if it was working at first it was
-                            // probably working afterward, so processing the audio could
-                            // be detrimental.
-                            return@vadAndTranscribe
-                        }
-
-                        val transcription = transcriptions[transcriptionIndex]!!
-
-                        if ((transcriptionIndex == 0) && !isSpeaking) {
-                            transcription.start = 0.toDouble()
-                        }
-
-                        transcriptions[transcriptionIndex]!!.end =
-                            (transcriptions[transcriptionIndex]!!.audioData.size - 1).toDouble()
-
-                        val transcribeJob = transcribeScope.launch {
-                            val timeBeforeTranscription = currentTimeMillis()
-
-                            val audio = transcription.audioData.slice(
-                                ((transcription.start!!.toInt() - speechStartPadMs).coerceAtLeast(
-                                    0
-                                ))..((transcription.end!!.toInt()).coerceAtMost(transcription.audioData.size - 1))
-                            ).toShortArray()
-
-                            transcription.text = transcribeSegment(recognitionLanguage, audio)
-                            Log.d("wyoming", transcription.text.toString())
-
-                            totalTranscriptionTime += currentTimeMillis() - timeBeforeTranscription
-
-                            for (job in transcribeJobs.iterator().withIndex()) {
-                                if (job.index < transcriptionIndex - 1) {
-                                    job.value.join()
-                                }
+                            if ((transcriptionIndex != 0) && !autoStopRecognition && !isSpeaking) {
+                                // break if we already transcribed once or more,
+                                // is not auto stop recognition, and not speaking
+                                // because we just want to stop then with the already transcribed parts.
+                                // if there were no transcriptions then we assume VAD didn't work,
+                                // so we transcribe everything all at once.
+                                // if there were transcriptions, then VAD was working.
+                                // in that case, we can break as if it was working at first it was
+                                // probably working afterward, so processing the audio could
+                                // be detrimental.
+                                return@vadAndTranscribe
                             }
 
-                            transcription.audioData.clear()
+                            val transcription = transcriptions[transcriptionIndex]!!
 
-                            if (isPartialResults == true) {
-                                val bundle = Bundle().apply {
-                                    putStringArrayList(
-                                        SpeechRecognizer.RESULTS_RECOGNITION,
-                                        arrayListOf(
-                                            transcription.text!!
-                                        )
+                            if ((transcriptionIndex == 0) && !isSpeaking) {
+                                transcription.start = 0.toDouble()
+                            }
+
+                            if (!transcription.transcribeStarted.compareAndSet(false, true)) {
+                                return@vadAndTranscribe
+                            }
+
+                            transcription.end =
+                                (transcription.audioData.size - 1).toDouble()
+
+                            val transcribeJob = transcribeScope.launch {
+                                val timeBeforeTranscription = currentTimeMillis()
+
+                                val audio = transcription.audioData.slice(
+                                    ((transcription.start!!.toInt() - speechStartPadMs).coerceAtLeast(
+                                        0
+                                    ))..((transcription.end!!.toInt()).coerceAtMost(transcription.audioData.size - 1))
+                                ).toShortArray()
+
+                                transcription.text = transcribeSegment(recognitionLanguage, audio)
+                                if (BuildConfig.DEBUG) {
+                                    Log.d("wyoming", transcription.text.toString())
+                                    Log.d(
+                                        "MainRecognitionService",
+                                        "stop partial index=$transcriptionIndex: ${transcription.text}"
                                     )
                                 }
 
-                                if (!isActive) {
-                                    return@launch
-                                }
+                                totalTranscriptionTime += currentTimeMillis() - timeBeforeTranscription
 
-                                listener?.partialResults(bundle)
-                            }
-                        }
-
-                        transcribeJobs.add(transcribeJob)
-
-                        transcribeJob.start() // start transcribing this segment right now
-                    } else {
-                        sileroVadRepository.detect(buffer)?.forEach {
-                            when (it.key) {
-                                "start" -> {
-                                    isSpeaking = true
-                                    listener?.beginningOfSpeech()
-
-                                    if (transcriptions[transcriptionIndex] == null) {
-                                        transcriptions[transcriptionIndex] =
-                                            Transcription(start = it.value, end = null, text = null)
-                                    } else {
-                                        transcriptions[transcriptionIndex]!!.start =
-                                            it.value
+                                for (job in transcribeJobs.iterator().withIndex()) {
+                                    if (job.index < transcriptionIndex - 1) {
+                                        job.value.join()
                                     }
                                 }
 
-                                "end" -> {
-                                    val transcription = transcriptions[transcriptionIndex]!!
+                                transcription.audioData.clear()
 
-                                    transcriptionIndex += 1
-                                    sileroVadRepository.reset()
+                                if (isPartialResults == true) {
+                                    val bundle = Bundle().apply {
+                                        putStringArrayList(
+                                            SpeechRecognizer.RESULTS_RECOGNITION,
+                                            arrayListOf(
+                                                transcription.text!!
+                                            )
+                                        )
+                                    }
 
-                                    if (transcription.end == null) {
-                                        isSpeaking = false
-                                        listener?.endOfSpeech()
+                                    if (!isActive) {
+                                        return@launch
+                                    }
 
-                                        transcription.end = it.value
+                                    listener?.partialResults(bundle)
+                                }
+                            }
 
-                                        val transcribeJob = transcribeScope.launch {
-                                            val timeBeforeTranscription = currentTimeMillis()
+                            transcribeJobs.add(transcribeJob)
 
-                                            val audio = transcription.audioData.slice(
-                                                ((transcription.start!!.toInt() - speechStartPadMs).coerceAtLeast(
-                                                    0
-                                                ))..((transcription.end!!.toInt()).coerceAtMost(transcription.audioData.size - 1))
-                                            ).toShortArray()
+                            transcribeJob.start() // start transcribing this segment right now
+                        } else {
+                            sileroVadRepository.detect(buffer)?.forEach {
+                                when (it.key) {
+                                    "start" -> {
+                                        isSpeaking = true
+                                        listener?.beginningOfSpeech()
 
-                                            transcription.text = transcribeSegment(recognitionLanguage, audio)
+                                        if (transcriptions[transcriptionIndex] == null) {
+                                            transcriptions[transcriptionIndex] =
+                                                Transcription(start = it.value, end = null, text = null)
+                                        } else {
+                                            transcriptions[transcriptionIndex]!!.start =
+                                                it.value
+                                        }
+                                    }
 
-                                            totalTranscriptionTime += currentTimeMillis() - timeBeforeTranscription
+                                    "end" -> {
+                                        val transcription = transcriptions[transcriptionIndex]!!
 
-                                            for (job in transcribeJobs.iterator().withIndex()) {
-                                                if (job.index < transcriptionIndex - 1) {
-                                                    job.value.join()
-                                                }
+                                        transcriptionIndex += 1
+                                        sileroVadRepository.reset()
+
+                                        if (transcription.end == null) {
+                                            isSpeaking = false
+                                            listener?.endOfSpeech()
+
+                                            if (!transcription.transcribeStarted.compareAndSet(false, true)) {
+                                                return@vadAndTranscribe
                                             }
 
-                                            transcription.audioData.clear()
+                                            transcription.end = it.value
 
-                                            if (isPartialResults == true) {
-                                                val bundle = Bundle().apply {
-                                                    putStringArrayList(
-                                                        SpeechRecognizer.RESULTS_RECOGNITION,
-                                                        arrayListOf(
-                                                            transcription.text!!
-                                                        )
+                                            val transcribeJob = transcribeScope.launch {
+                                                val timeBeforeTranscription = currentTimeMillis()
+
+                                                val audio = transcription.audioData.slice(
+                                                    ((transcription.start!!.toInt() - speechStartPadMs).coerceAtLeast(
+                                                        0
+                                                    ))..((transcription.end!!.toInt()).coerceAtMost(transcription.audioData.size - 1))
+                                                ).toShortArray()
+
+                                                transcription.text = transcribeSegment(recognitionLanguage, audio)
+                                                if (BuildConfig.DEBUG) {
+                                                    Log.d(
+                                                        "MainRecognitionService",
+                                                        "vad partial index=$transcriptionIndex: ${transcription.text}"
                                                     )
                                                 }
 
-                                                if (!isActive) {
-                                                    return@launch
+                                                totalTranscriptionTime += currentTimeMillis() - timeBeforeTranscription
+
+                                                for (job in transcribeJobs.iterator().withIndex()) {
+                                                    if (job.index < transcriptionIndex - 1) {
+                                                        job.value.join()
+                                                    }
                                                 }
 
-                                                listener?.partialResults(bundle)
+                                                transcription.audioData.clear()
+
+                                                if (isPartialResults == true) {
+                                                    val bundle = Bundle().apply {
+                                                        putStringArrayList(
+                                                            SpeechRecognizer.RESULTS_RECOGNITION,
+                                                            arrayListOf(
+                                                                transcription.text!!
+                                                            )
+                                                        )
+                                                    }
+
+                                                    if (!isActive) {
+                                                        return@launch
+                                                    }
+
+                                                    listener?.partialResults(bundle)
+                                                }
                                             }
-                                        }
 
-                                        transcribeJobs.add(transcribeJob)
+                                            transcribeJobs.add(transcribeJob)
 
-                                        transcribeJob.start() // start transcribing this segment right now
+                                            transcribeJob.start() // start transcribing this segment right now
 
-                                        if (autoStopRecognition) {
-                                            isRecording.set(false)
+                                            if (autoStopRecognition) {
+                                                isRecording.set(false)
+                                            }
                                         }
                                     }
                                 }
@@ -471,6 +503,10 @@ class MainRecognitionService : RecognitionService() {
                 )
             }
 
+
+            if (BuildConfig.DEBUG) {
+                Log.d("MainRecognitionService", "final results: $transcription")
+            }
 
             try {
                 listener?.results(bundle)
